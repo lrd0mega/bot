@@ -1,117 +1,401 @@
--- Importing required modules
-local json = require("json")
+-- Math Game
 
--- Define the game state variables
-local gameState = {
-    currentNumber = nil,  -- The current number chosen by the player
-    correctAnswers = 0,   -- Number of correct answers
-    totalQuestions = 0,   -- Total number of questions asked
-    timer = nil           -- Timer for each question
+-- GLOBAL VARIABLES
+
+-- Game progression modes in a loop:
+-- [Not-Started] -> Waiting -> Playing -> [Someone wins or timeout] -> Waiting...
+GameMode = GameMode or "Not-Started"
+StateChangeTime = StateChangeTime or undefined
+
+-- State durations (in milliseconds)
+WaitTime = WaitTime or 2 * 60 * 1000 -- 2 minutes
+EasyQuestionTime = EasyQuestionTime or 10 * 1000 -- 10 seconds
+MediumQuestionTime = MediumQuestionTime or 25 * 1000 -- 25 seconds
+HardQuestionTime = HardQuestionTime or 45 * 1000 -- 45 seconds
+Now = Now or undefined -- Current time, updated on every message.
+
+-- Token information for player stakes.
+PaymentToken = PaymentToken or "CRED"  -- Token address
+
+-- Players waiting to join the next game and their payment status.
+Waiting = Waiting or {}
+-- Active players and their game states.
+Players = Players or {}
+-- Players' answers to questions.
+PlayerAnswers = PlayerAnswers or {}
+
+-- Difficulty levels and their respective entry fees and question times.
+DifficultyLevels = {
+    ["easy"] = {EntryFee = 1, QuestionTime = EasyQuestionTime},
+    ["medium"] = {EntryFee = 3, QuestionTime = MediumQuestionTime},
+    ["hard"] = {EntryFee = 5, QuestionTime = HardQuestionTime}
 }
 
--- Define the questions for each challenge level
-local easyQuestions = {
-    {question = "What is the cube root of 1?", answer = 1},
-    {question = "What is the cube root of 8?", answer = 2},
-    {question = "What is 2 + 2?", answer = 4},
-    {question = "What is 5 - 3?", answer = 2},
-    {question = "What is 10 * 3?", answer = 30}
+-- Questions for each difficulty level.
+Questions = {
+    easy = {
+        "What is 2 + 2?",
+        "What is the probability of rolling a 6 on a fair six-sided die?",
+        "What is the square root of 16?",
+        "What is 3 * 4?",
+        "What is the probability of drawing a red card from a standard deck of playing cards?"
+    },
+    medium = {
+        "What is the sum of the first 10 natural numbers?",
+        "What is the probability of rolling a sum of 7 with two fair six-sided dice?",
+        "What is 5! (5 factorial)?",
+        "What is the probability of drawing a face card (jack, queen, or king) from a standard deck of playing cards?",
+        "What is the value of 3^4?"
+    },
+    hard = {
+        "How many ways can you arrange the letters in the word 'MATHEMATICS'?",
+        "What is the probability of drawing a flush (all cards of the same suit) from a standard deck of playing cards?",
+        "What is the value of 10 choose 3?",
+        "How many different 4-digit numbers can be formed using the digits 1, 2, 3, and 4 without repetition?",
+        "What is the probability of drawing a full house (three of a kind and a pair) from a standard deck of playing cards?"
+    }
 }
 
-local difficultQuestions = {
-    {question = "A couple has two children. The probability that both children are boys if the older one is a boy is?", answer = "1/2"},
-    {question = "What is the probability of getting exactly two heads when flipping three fair coins?", answer = "3/8"},
-    {question = "If you randomly select a card from a standard deck of 52 cards, what is the probability of selecting a red card?", answer = "1/2"},
-    {question = "What is the probability of rolling a total of 7 on two fair six-sided dice?", answer = "1/6"},
-    {question = "What is the probability of drawing two aces in a row from a standard deck of 52 cards?", answer = "1/221"}
+-- Correct answers for each question.
+CorrectAnswers = {
+    easy = {"4", "1/6", "4", "12", "1/2"},
+    medium = {"55", "1/6", "120", "3/13", "81"},
+    hard = {"11!", "1/64974", "120", "24", "1/4165"}
 }
 
-local prettyHardQuestions = {
-    {question = "A bag contains 2 red, 3 green, and 2 blue balls. Two balls are drawn at random. What is the probability that none of the balls drawn is blue?", answer = "5/21"},
-    {question = "If you roll two fair six-sided dice, what is the probability that the sum of the dice is greater than 9?", answer = "5/12"},
-    {question = "In a group of 40 people, what is the probability that at least two people have the same birthday?", answer = "0.891"},
-    {question = "If you flip a fair coin 10 times, what is the probability of getting exactly 4 heads?", answer = "0.205"},
-    {question = "What is the probability of selecting a prime number between 1 and 20?", answer = "8/20"}
-}
-
--- Function to ask the player a question
-local function askQuestion(questions, timerDuration)
-    -- Increment the total questions asked
-    gameState.totalQuestions = gameState.totalQuestions + 1
-    
-    -- Choose a random question
-    local randomIndex = math.random(1, #questions)
-    local currentQuestion = questions[randomIndex]
-    
-    -- Print the question and start the timer
-    print("Question " .. gameState.totalQuestions .. ": " .. currentQuestion.question)
-    print("You have " .. timerDuration .. " seconds to answer.")
-    
-    -- Start the timer
-    gameState.timer = os.time()
-    
-    -- Read the player's answer
-    local playerAnswer = io.read()
-    
-    -- Calculate the time taken
-    local currentTime = os.time()
-    local elapsedTime = currentTime - gameState.timer
-    
-    -- Check if the answer is correct and within the time limit
-    if tostring(playerAnswer) == tostring(currentQuestion.answer) and elapsedTime <= timerDuration then
-        -- Increment the correct answers count
-        gameState.correctAnswers = gameState.correctAnswers + 1
-        print("Correct answer!")
-    else
-        print("Wrong answer or time limit exceeded.")
-        print("Game Over. You answered " .. gameState.correctAnswers .. " out of " .. gameState.totalQuestions .. " questions correctly.")
-        print("Starting the game again.")
-        -- Reset game state
-        gameState.currentNumber = nil
-        gameState.correctAnswers = 0
-        gameState.totalQuestions = 0
-        return
-    end
-    
-    -- If the player answered correctly, ask another question
-    askQuestion(questions, timerDuration)
+-- Default player state initialization.
+function PlayerInitState()
+    return {
+        CorrectAnswers = 0,
+        TotalTime = 0
+    }
 end
 
--- Function to start the game with the chosen challenge level
-local function startGame(challengeLevel)
-    -- Start the game by asking the player to choose a number
-    print("Welcome to the Math Challenge Game!")
-    print("Please choose a number from 1 to 9:")
-    gameState.currentNumber = tonumber(io.read())
-
-    -- Validate the chosen number
-    if gameState.currentNumber < 1 or gameState.currentNumber > 9 then
-        print("Invalid number. Please choose a number from 1 to 9.")
-        return
+-- Sends a state change announcement to all registered listeners.
+-- @param event: The event type or name.
+-- @param description: Description of the event.
+function announce(event, description)
+    for ix, address in pairs(Listeners) do
+        ao.send({
+            Target = address,
+            Action = "Announcement",
+            Event = event,
+            Data = description
+        })
     end
-
-    -- Determine the questions and timer duration based on the challenge level
-    local questions
-    local timerDuration
-    if challengeLevel == "easy" then
-        questions = easyQuestions
-        timerDuration = 5
-    elseif challengeLevel == "difficult" then
-        questions = difficultQuestions
-        timerDuration = 15
-    elseif challengeLevel == "pretty hard" then
-        questions = prettyHardQuestions
-        timerDuration = 30
-    else
-        print("Invalid challenge level. Please choose either 'easy', 'difficult', or 'pretty hard'.")
-        return
-    end
-
-    -- Start asking questions
-    askQuestion(questions, timerDuration)
+    return print("Announcement: " .. event .. " " .. description)
 end
 
--- Start the game with the chosen challenge level
-print("Choose your challenge level: 'easy', 'difficult', or 'pretty hard'")
-local challengeLevel = io.read()
-startGame(challengeLevel)
+-- Sends a reward to a player.
+-- @param recipient: The player receiving the reward.
+-- @param qty: The quantity of the reward.
+-- @param reason: The reason for the reward.
+function sendReward(recipient, qty, reason)
+    if type(qty) ~= number then
+      qty = tonumber(qty)
+    end
+    ao.send({
+        Target = PaymentToken,
+        Action = "Transfer",
+        Quantity = tostring(qty),
+        Recipient = recipient,
+        Reason = reason
+    })
+    return print("Sent Reward: " .. tostring(qty) .. " tokens to " .. recipient .. " " .. reason)
+end
+
+-- Starts the waiting period for players to become ready to play.
+function startWaitingPeriod()
+    GameMode = "Waiting"
+    StateChangeTime = Now + WaitTime
+    announce("Started-Waiting-Period", "The game is about to begin! Send your token to take part.")
+    print('Starting Waiting Period')
+end
+
+-- Starts the game if there are enough players.
+function startGamePeriod(difficulty)
+    local entryFee = DifficultyLevels[difficulty].EntryFee
+    local questionTime = DifficultyLevels[difficulty].QuestionTime
+    
+    local paidPlayers = 0
+    for player, hasPaid in pairs(Waiting) do
+        if hasPaid then
+            paidPlayers = paidPlayers + 1
+        end
+    end
+
+    if paidPlayers < 2 then
+        announce("Not-Enough-Players", "Not enough players registered for " .. difficulty .. " level! Restarting...")
+        for player, hasPaid in pairs(Waiting) do
+            if hasPaid then
+                Waiting[player] = false
+                sendReward(player, entryFee, "Refund")
+            end
+        end
+        startWaitingPeriod()
+        return
+    end
+
+    LastTick = undefined
+    GameMode = "Playing"
+    StateChangeTime = Now + questionTime
+    for player, hasPaid in pairs(Waiting) do
+        if hasPaid then
+            Players[player] = PlayerInitState()
+            PlayerAnswers[player] = {}
+        else
+            ao.send({
+                Target = player,
+                Action = "Ejected",
+                Reason = "Did-Not-Pay"
+            })
+            removeListener(player) -- Removing player from listener if they didn't pay
+        end
+    end
+    announce("Started-Game", "The " .. difficulty .. " level game has started. Good luck!")
+    print("Game Started for " .. difficulty .. " level....")
+    askQuestion(difficulty, 1)
+end
+
+-- Handles the elimination of a player from the game.
+-- @param eliminated: The player to be eliminated.
+function eliminatePlayer(eliminated)
+    Waiting[eliminated] = false
+    Players[eliminated] = nil
+    PlayerAnswers[eliminated] = nil
+
+    announce("Player-Eliminated", eliminated .. " was eliminated!")
+
+    local playerCount = 0
+    for player, _ in pairs(Players) do
+        playerCount = playerCount + 1
+    end
+
+    if playerCount < 2 then
+        endGame()
+    end
+end
+
+-- Ends the current game and starts a new one.
+function endGame()
+    print("Game Over")
+
+    local winner = ""
+    local maxCorrectAnswers = 0
+    local minTotalTime = math.huge
+
+    for player, state in pairs(Players) do
+        if state.CorrectAnswers > maxCorrectAnswers then
+            winner = player
+            maxCorrectAnswers = state.CorrectAnswers
+            minTotalTime = state.TotalTime
+        elseif state.CorrectAnswers == maxCorrectAnswers then
+            if state.TotalTime < minTotalTime then
+                winner = player
+                minTotalTime = state.TotalTime
+            end
+        end
+    end
+
+    local entryFee = DifficultyLevels[difficulty].EntryFee
+    sendReward(winner, entryFee * (#Players - 1), "Win")
+
+    Players = {}
+    PlayerAnswers = {}
+    announce("Game-Ended", "Congratulations! The game has ended. Winner: " .. winner .. ".")
+    startWaitingPeriod()
+end
+
+-- Removes a listener from the listeners' list.
+-- @param listener: The listener to be removed.
+function removeListener(listener)
+    local idx = 0
+    for i, v in ipairs(Listeners) do
+        if v == listener then
+            idx = i
+            break
+        end
+    end
+    if idx > 0 then
+        table.remove(Listeners, idx)
+    end 
+end
+
+-- HANDLERS: Game state management
+
+-- Handler for cron messages, manages game state transitions.
+Handlers.add(
+    "Game-State-Timers",
+    function(Msg)
+        return "continue"
+    end,
+    function(Msg)
+        Now = Msg.Timestamp
+        if GameMode == "Not-Started" then
+            startWaitingPeriod()
+        elseif GameMode == "Waiting" then
+            if Now > StateChangeTime then
+                startGamePeriod(difficulty)
+            end
+        elseif GameMode == "Playing" then
+            if Now > StateChangeTime then
+                endGame()
+            end
+        end
+    end
+)
+
+-- Handler for player deposits to participate in the game.
+Handlers.add(
+    "Transfer",
+    function(Msg)
+        return Msg.Action == "Credit-Notice" and
+               Msg.From == PaymentToken and
+               DifficultyLevels[Msg.Tags.Difficulty] and
+               tonumber(Msg.Quantity) >= DifficultyLevels[Msg.Tags.Difficulty].EntryFee and
+               "continue"
+    end,
+    function(Msg)
+        Waiting[Msg.Sender] = true
+        ao.send({
+            Target = Msg.Sender,
+            Action = "Payment-Received"
+        })
+        announce("Player-Ready", Msg.Sender .. " is ready to play " .. Msg.Tags.Difficulty .. " level!")
+    end
+)
+
+-- Registers new players for the game and subscribes them for event info.
+Handlers.add(
+    "Register",
+    Handlers.utils.hasMatchingTag("Action", "Register"),
+    function(Msg)
+        if Msg.Mode ~= "Listen" and Waiting[Msg.From] == undefined then
+            Waiting[Msg.From] = false
+        end
+        removeListener(Msg.From)
+        table.insert(Listeners, Msg.From)
+        ao.send({
+            Target = Msg.From,
+            Action = "Registered"
+        })
+        announce("New Player Registered", Msg.From .. " has joined in waiting.")
+    end
+)
+
+-- Unregisters players and stops sending them event info.
+Handlers.add(
+    "Unregister",
+    Handlers.utils.hasMatchingTag("Action", "Unregister"),
+    function(Msg)
+        removeListener(Msg.From)
+        ao.send({
+            Target = Msg.From,
+            Action = "Unregistered"
+        })
+    end
+)
+
+-- Retrieves the current game state.
+Handlers.add(
+    "GetGameState",
+    Handlers.utils.hasMatchingTag("Action", "GetGameState"),
+    function (Msg)
+        local json = require("json")
+        local TimeRemaining = StateChangeTime - Now
+        local GameState = json.encode({
+            GameMode = GameMode,
+            TimeRemaining = TimeRemaining,
+            Players = Players,
+            })
+        ao.send({
+            Target = Msg.From,
+            Action = "GameState",
+            Data = GameState})
+    end
+)
+
+-- Ask a question to all players.
+function askQuestion(difficulty, questionNumber)
+    local question = Questions[difficulty][questionNumber]
+    local options = {"A", "B", "C", "D"}
+    local correctAnswer = CorrectAnswers[difficulty][questionNumber]
+    local timeLimit = DifficultyLevels[difficulty].QuestionTime
+
+    -- Shuffle options
+    for i = #options, 2, -1 do
+        local j = math.random(i)
+        options[i], options[j] = options[j], options[i]
+    end
+
+    local questionData = {
+        Question = question,
+        Options = options,
+        CorrectAnswer = correctAnswer,
+        TimeLimit = timeLimit
+    }
+
+    -- Send question to players
+    for player, _ in pairs(Players) do
+        ao.send({
+            Target = player,
+            Action = "Ask-Question",
+            Data = questionData
+        })
+    end
+end
+
+-- Handler for player answers.
+Handlers.add(
+    "Player-Answer",
+    function(Msg)
+        return Msg.Action == "Player-Answer" and
+               Players[Msg.From] and
+               Msg.Tags.QuestionNumber and
+               Msg.Tags.Answer and
+               PlayerAnswers[Msg.From] and
+               not PlayerAnswers[Msg.From][Msg.Tags.QuestionNumber] and
+               "continue"
+    end,
+    function(Msg)
+        local player = Msg.From
+        local questionNumber = tonumber(Msg.Tags.QuestionNumber)
+        local answer = Msg.Tags.Answer
+        local correctAnswer = CorrectAnswers[difficulty][questionNumber]
+
+        if answer == correctAnswer then
+            Players[player].CorrectAnswers = Players[player].CorrectAnswers + 1
+        end
+
+        PlayerAnswers[player][questionNumber] = answer
+
+        if questionNumber < 5 then
+            askQuestion(difficulty, questionNumber + 1)
+        else
+            eliminatePlayer(player)
+        end
+    end
+)
+
+-- Handler for player timeout.
+Handlers.add(
+    "Player-Timeout",
+    function(Msg)
+        return Msg.Action == "Player-Timeout" and
+               Players[Msg.From] and
+               Msg.Tags.QuestionNumber and
+               PlayerAnswers[Msg.From] and
+               not PlayerAnswers[Msg.From][Msg.Tags.QuestionNumber] and
+               "continue"
+    end,
+    function(Msg)
+        local player = Msg.From
+        local questionNumber = tonumber(Msg.Tags.QuestionNumber)
+
+        if questionNumber < 5 then
+            askQuestion(difficulty, questionNumber + 1)
+        else
+            eliminatePlayer(player)
+        end
+    end
+)
